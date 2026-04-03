@@ -2,3 +2,5 @@
 /Lab 2/cs231n/saved/
 __pycache__/
 *.py[cod]
+.codesight
+.venv

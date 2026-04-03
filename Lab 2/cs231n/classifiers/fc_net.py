@@ -107,7 +107,7 @@ class TwoLayerNet(object):
       """Save model parameters."""
       fpath = os.path.join(os.path.dirname(__file__), "../saved/", fname)
       params = self.params
-      np.save(fpath, params)
+      np.save(fpath, params) # type: ignore
       print(fname, "saved.")
     
     def load(self, fname):
@@ -191,6 +191,18 @@ class FullyConnectedNet(object):
         # parameters should be initialized to zeros.                               #
         ############################################################################
 
+        layer_dims = [input_dim] + hidden_dims + [num_classes]
+        for i in range(self.num_layers):
+            self.params["W{}".format(i + 1)] = weight_scale * np.random.randn(
+                layer_dims[i], layer_dims[i + 1]
+            )
+            self.params["b{}".format(i + 1)] = np.zeros(layer_dims[i + 1])
+
+        if self.normalization is not None:
+            for i in range(self.num_layers - 1):
+                self.params["gamma{}".format(i + 1)] = np.ones(layer_dims[i + 1])
+                self.params["beta{}".format(i + 1)] = np.zeros(layer_dims[i + 1])
+
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -261,6 +273,42 @@ class FullyConnectedNet(object):
         # layer, etc.                                                              #
         ############################################################################
 
+        cache_list = []
+        out = X
+        for i in range(self.num_layers - 1):
+            # affine forward
+            W = self.params["W{}".format(i + 1)]
+            b = self.params["b{}".format(i + 1)]
+            out, cache = affine_forward(out, W, b)
+            cache_list.append(cache)
+
+            # batch/layer norm
+            if self.normalization is not None:
+                gamma = self.params["gamma{}".format(i + 1)]
+                beta = self.params["beta{}".format(i + 1)]
+                if self.normalization == "batchnorm":
+                    bn_param = self.bn_params[i]
+                    out, cache = batchnorm_forward(out, gamma, beta, bn_param)
+                elif self.normalization == "layernorm":
+                    ln_param = self.bn_params[i]
+                    out, cache = layernorm_forward(out, gamma, beta, ln_param)
+                cache_list.append(cache)
+
+            # relu
+            out, cache = relu_forward(out)
+            cache_list.append(cache)
+
+            # dropout
+            if self.use_dropout:
+                out, cache = dropout_forward(out, self.dropout_param)
+                cache_list.append(cache)
+
+        # last affine
+        W = self.params["W{}".format(self.num_layers)]
+        b = self.params["b{}".format(self.num_layers)]
+        scores, cache = affine_forward(out, W, b)
+        cache_list.append(cache)
+
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
@@ -284,18 +332,56 @@ class FullyConnectedNet(object):
         # of 0.5 to simplify the expression for the gradient.                      #
         ############################################################################
 
-        ############################################################################
-        #                             END OF YOUR CODE                             #
-        ############################################################################
+
+        loss, dscores = softmax_loss(scores, y)
+        # L2 regularization
+        for i in range(self.num_layers):
+            W = self.params["W{}".format(i + 1)]
+            loss += 0.5 * self.reg * np.sum(W * W)
+
+        dout = dscores
+        # backward last affine
+        cache = cache_list.pop()
+        dout, dW, db = affine_backward(dout, cache)
+        grads["W{}".format(self.num_layers)] = dW + self.reg * self.params["W{}".format(self.num_layers)]
+        grads["b{}".format(self.num_layers)] = db
+
+        # backward hidden layers (reverse)
+        for layer_idx in range(self.num_layers - 1, 0, -1):
+            if self.use_dropout:
+                cache = cache_list.pop()
+                dout = dropout_backward(dout, cache)
+            # relu backward
+            cache = cache_list.pop()
+            dout = relu_backward(dout, cache)
+            # norm backward if used
+            if self.normalization is not None:
+                cache = cache_list.pop()
+                if self.normalization == "batchnorm":
+                    dout, dgamma, dbeta = batchnorm_backward(dout, cache)
+                else:  # layernorm
+                    dout, dgamma, dbeta = layernorm_backward(dout, cache)
+                grads["gamma{}".format(layer_idx)] = dgamma
+                grads["beta{}".format(layer_idx)] = dbeta
+            # affine backward
+            cache = cache_list.pop()
+            dout, dW, db = affine_backward(dout, cache)
+            W = self.params["W{}".format(layer_idx)]
+            grads["W{}".format(layer_idx)] = dW + self.reg * W
+            grads["b{}".format(layer_idx)] = db
+
 
         return loss, grads
 
+        ############################################################################
+        #                             END OF YOUR CODE                             #
+        ############################################################################
 
     def save(self, fname):
       """Save model parameters."""
       fpath = os.path.join(os.path.dirname(__file__), "../saved/", fname)
       params = self.params
-      np.save(fpath, params)
+      np.save(fpath, params) # type: ignore
       print(fname, "saved.")
     
     def load(self, fname):
